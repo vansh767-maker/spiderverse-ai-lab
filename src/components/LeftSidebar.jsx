@@ -395,18 +395,46 @@ export default function LeftSidebar({
       {/* ── F. Web Search ── */}
       <SectionCard title="🔍 Web Search">
         <div style={styles.toggleRow}>
-          <Search size={14} color="#6b7280" />
-          <span style={{ ...styles.checkLabel, marginLeft: 8 }}>
+          <Search size={14} color={webSearchEnabled ? "#e62429" : "#6b7280"} />
+          <span style={{ ...styles.checkLabel, marginLeft: 8, flex: 1 }}>
             Web Search Integration
           </span>
-          <div style={styles.toggleTrack} title="Not yet available">
-            <div style={styles.toggleThumb} />
-          </div>
+          <button
+            type="button"
+            onClick={() => setWebSearchEnabled && setWebSearchEnabled(!webSearchEnabled)}
+            style={{
+              ...styles.toggleTrack,
+              background: webSearchEnabled ? "#e62429" : "rgba(107,114,128,0.3)",
+              borderColor: webSearchEnabled ? "#ff4d50" : "rgba(107,114,128,0.4)",
+              cursor: "pointer",
+            }}
+            title={webSearchEnabled ? "Disable web search" : "Enable web search"}
+          >
+            <div
+              style={{
+                ...styles.toggleThumb,
+                transform: webSearchEnabled ? "translateX(16px)" : "translateX(0px)",
+                background: webSearchEnabled ? "#fff" : "#6b7280",
+                transition: "transform 0.2s ease, background 0.2s ease",
+              }}
+            />
+          </button>
         </div>
-        <p style={{ ...styles.dimText, marginTop: 8 }}>
-          ⚠️ Web search requires a compatible integration. This feature is not
-          yet available with the standard Groq API without additional tooling.
-        </p>
+
+        {webSearchEnabled ? (
+          <div style={styles.warningCallout}>
+            <div style={{ color: "#f59e0b", fontWeight: 700, fontSize: "0.7rem", marginBottom: 3 }}>
+              ⚠️ Live Search Not Configured
+            </div>
+            <p style={{ ...styles.dimText, color: "#cbd5e1" }}>
+              Standard Groq API models operate strictly on direct neural inference and do not provide native internet browsing without an external tool agent (such as Tavily or SerpAPI). Prompts will be processed using the model&apos;s pre-trained knowledge base.
+            </p>
+          </div>
+        ) : (
+          <p style={{ ...styles.dimText, marginTop: 8 }}>
+            Toggles web search augmentation when a compatible external search provider is configured.
+          </p>
+        )}
       </SectionCard>
 
       {/* ── G. Context Window ── */}
@@ -837,6 +865,14 @@ const styles = {
   spinIcon: {
     animation: "spin 1s linear infinite",
     marginRight: 5,
+  },
+
+  warningCallout: {
+    background: "rgba(245, 158, 11, 0.1)",
+    border: "1px solid rgba(245, 158, 11, 0.35)",
+    borderRadius: "6px",
+    padding: "8px 10px",
+    marginTop: "8px",
   },
 };
 

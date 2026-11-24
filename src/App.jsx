@@ -61,6 +61,8 @@ export default function App() {
     setStopSequences,
     contextWindow,
     setContextWindow,
+    webSearchEnabled,
+    setWebSearchEnabled,
 
     usage,
     speedMetrics,
@@ -159,6 +161,8 @@ export default function App() {
               setStopSequences={setStopSequences}
               contextWindow={contextWindow ?? 10}
               setContextWindow={setContextWindow}
+              webSearchEnabled={webSearchEnabled}
+              setWebSearchEnabled={setWebSearchEnabled}
               onOpenPerplexity={() => setCurrentMode('perplexity')}
               onOpenApiKeyModal={() => setShowApiKeyModal(true)}
             />

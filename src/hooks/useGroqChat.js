@@ -106,6 +106,7 @@ export function useGroqChat() {
 
   const [stopSequences, setStopSequences] = useState([]);
   const [contextWindow, setContextWindow] = useState(null); // null = all messages
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // ── Chat state ────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState([]);
@@ -430,6 +431,8 @@ export function useGroqChat() {
     setStopSequences,
     contextWindow,
     setContextWindow,
+    webSearchEnabled,
+    setWebSearchEnabled,
 
     // Metrics
     usage,
