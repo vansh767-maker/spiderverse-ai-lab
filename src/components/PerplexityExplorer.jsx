@@ -275,6 +275,76 @@ function estimateTokensForText(text) {
   });
 }
 
+// ── Clearly Documented Probability Thresholds ─────────────────────────────────
+// Token surprise classification is strictly defined relative to this model's
+// predicted probability distribution P(token | context) over its vocabulary:
+//
+// 1. Expected:   P >= 0.20 (Model assigned 20.0% or higher probability given preceding context)
+// 2. Medium:     0.05 <= P < 0.20 (Model assigned 5.0% to 19.9% probability)
+// 3. Surprising: P < 0.05 (Model assigned less than 5.0% probability)
+//
+// NOTE: Token probability measures how likely this specific language model
+// considers a token given the preceding context. A low probability does NOT imply
+// that a token is unusual, improper, or rare in real-world human language.
+export const SURPRISE_THRESHOLDS = {
+  EXPECTED_MIN: 0.20,
+  MEDIUM_MIN: 0.05,
+};
+
+export function getSurpriseClassification(p, tokenText = '', contextText = '') {
+  const probPercent = (p * 100).toFixed(1);
+  const cleanToken = tokenText ? `'${tokenText.trim()}'` : 'This token';
+
+  if (p >= SURPRISE_THRESHOLDS.EXPECTED_MIN) {
+    return {
+      tier: 'expected',
+      label: 'Expected',
+      thresholdRule: 'P ≥ 20.0%',
+      fullThreshold: `Threshold: P ≥ ${(SURPRISE_THRESHOLDS.EXPECTED_MIN * 100).toFixed(0)}%`,
+      color: '#4ade80',
+      bg: 'rgba(34, 197, 94, 0.15)',
+      border: 'rgba(34, 197, 94, 0.45)',
+      badgeBg: 'rgba(34, 197, 94, 0.12)',
+      badgeBorder: 'rgba(34, 197, 94, 0.35)',
+      icon: '🟢',
+      summary: `High likelihood (${probPercent}%) under DistilGPT-2`,
+      tooltip: `${cleanToken} received an 'Expected' classification because DistilGPT-2 assigned it a conditional probability of P = ${p} (${probPercent}%), meeting or exceeding the 20% threshold given the preceding context.`
+    };
+  }
+
+  if (p >= SURPRISE_THRESHOLDS.MEDIUM_MIN) {
+    return {
+      tier: 'medium',
+      label: 'Medium',
+      thresholdRule: '5.0% ≤ P < 20.0%',
+      fullThreshold: `Threshold: ${(SURPRISE_THRESHOLDS.MEDIUM_MIN * 100).toFixed(0)}% ≤ P < ${(SURPRISE_THRESHOLDS.EXPECTED_MIN * 100).toFixed(0)}%`,
+      color: '#fde047',
+      bg: 'rgba(234, 179, 8, 0.15)',
+      border: 'rgba(234, 179, 8, 0.45)',
+      badgeBg: 'rgba(234, 179, 8, 0.12)',
+      badgeBorder: 'rgba(234, 179, 8, 0.35)',
+      icon: '🟡',
+      summary: `Moderate likelihood (${probPercent}%) under DistilGPT-2`,
+      tooltip: `${cleanToken} received a 'Medium' classification because DistilGPT-2 assigned it P = ${p} (${probPercent}%), falling within the 5%–20% range given the preceding context. Multiple plausible candidates shared probability mass.`
+    };
+  }
+
+  return {
+    tier: 'surprising',
+    label: 'Surprising',
+    thresholdRule: 'P < 5.0%',
+    fullThreshold: `Threshold: P < ${(SURPRISE_THRESHOLDS.MEDIUM_MIN * 100).toFixed(0)}%`,
+    color: '#f87171',
+    bg: 'rgba(230, 36, 41, 0.18)',
+    border: 'rgba(230, 36, 41, 0.5)',
+    badgeBg: 'rgba(230, 36, 41, 0.15)',
+    badgeBorder: 'rgba(230, 36, 41, 0.4)',
+    icon: '🔴',
+    summary: `Low likelihood (${probPercent}%) under DistilGPT-2`,
+    tooltip: `${cleanToken} received a 'Surprising' classification because DistilGPT-2 assigned it P = ${p} (${probPercent}%), below the 5% threshold given the preceding context. Note: This reflects only the model's next-token probability distribution, NOT that the word is unusual or unnatural in real-world English.`
+  };
+}
+
 export default function PerplexityExplorer({ onClose }) {
   // ── Tab: 'type' (Model Evaluation) vs 'hand' (Simulated manual calculation) ──
   const [activeTab, setActiveTab] = useState('type');
@@ -290,6 +360,7 @@ export default function PerplexityExplorer({ onClose }) {
   const [evaluatedTokens, setEvaluatedTokens] = useState(() => PRESET_DISTILGPT2_DATA['I love Python'].tokens);
   const [hasEvaluated, setHasEvaluated] = useState(true);
   const [selectedTokenIdx, setSelectedTokenIdx] = useState(null);
+  const [hoveredTokenIdx, setHoveredTokenIdx] = useState(null);
 
   // ── Mode 2: Try it by hand state ──
   const [handTokens, setHandTokens] = useState([
@@ -332,6 +403,7 @@ export default function PerplexityExplorer({ onClose }) {
           setEvaluatedTokens(tokens);
           setHasEvaluated(true);
           setSelectedTokenIdx(null);
+          setHoveredTokenIdx(null);
         }, 400);
       }, 2300);
     } else {
@@ -340,32 +412,49 @@ export default function PerplexityExplorer({ onClose }) {
       setEvaluatedTokens(tokens);
       setHasEvaluated(true);
       setSelectedTokenIdx(null);
+      setHoveredTokenIdx(null);
     }
   };
 
   // ── Mode 1 Math Calculations ──
+  // Perplexity calculated using average negative log probability followed by exponentiation
   const mode1Stats = useMemo(() => {
     if (!evaluatedTokens.length) return null;
     const N = evaluatedTokens.length;
 
-    // Step 1: Product of (1 / P)
-    let productOfReciprocals = 1;
     let sumNegativeLogProb = 0;
+    let productOfReciprocals = 1;
+    const tokenCalculations = [];
 
-    evaluatedTokens.forEach(t => {
+    evaluatedTokens.forEach((t, i) => {
       const p = Math.max(1e-7, t.prob);
-      productOfReciprocals *= (1 / p);
-      sumNegativeLogProb += -Math.log(p);
+      const negLog = -Math.log(p);
+      const recip = 1 / p;
+      sumNegativeLogProb += negLog;
+      productOfReciprocals *= recip;
+
+      const precedingContext = evaluatedTokens.slice(0, i).map(x => x.token).join('');
+      tokenCalculations.push({
+        token: t.token,
+        prob: t.prob,
+        negLog: parseFloat(negLog.toFixed(4)),
+        recip: parseFloat(recip.toFixed(3)),
+        classification: getSurpriseClassification(t.prob, t.token, precedingContext)
+      });
     });
 
-    // Step 3: N-th root of product (computed using exp(sum(-ln p)/N) to prevent 64-bit float overflow)
+    // 1. Average negative log probability across all evaluated tokens
     const avgNegativeLogProb = sumNegativeLogProb / N;
+
+    // 2. Sentence-level perplexity = exp(avgNegativeLogProb)
     const perplexity = Math.exp(avgNegativeLogProb);
 
     return {
       N,
+      tokenCalculations,
+      sumNegativeLogProb: parseFloat(sumNegativeLogProb.toFixed(4)),
+      avgNegativeLogProb: parseFloat(avgNegativeLogProb.toFixed(4)),
       productOfReciprocals,
-      avgNegativeLogProb,
       perplexity: parseFloat(perplexity.toFixed(3))
     };
   }, [evaluatedTokens]);
@@ -373,28 +462,42 @@ export default function PerplexityExplorer({ onClose }) {
   // ── Mode 2 Math Calculations ──
   const mode2Stats = useMemo(() => {
     if (!handTokens.length) {
-      return { N: 0, product: 0, perplexity: 0, stepsText: '' };
+      return { N: 0, product: 0, perplexity: 0, sumNegLog: 0, avgNegLog: 0, productTermsStr: '', tokenCalculations: [] };
     }
 
     const N = handTokens.length;
     let product = 1;
-    let sumLog = 0;
+    let sumNegLog = 0;
     const productTerms = [];
+    const tokenCalculations = [];
 
-    handTokens.forEach(t => {
+    handTokens.forEach((t, i) => {
       const p = Math.max(0.0001, t.prob);
       const recip = 1 / p;
+      const negLog = -Math.log(p);
       product *= recip;
-      sumLog += -Math.log(p);
+      sumNegLog += negLog;
       productTerms.push(recip % 1 === 0 ? recip.toString() : parseFloat(recip.toFixed(3)));
+
+      tokenCalculations.push({
+        token: t.token,
+        prob: t.prob,
+        recip: parseFloat(recip.toFixed(3)),
+        negLog: parseFloat(negLog.toFixed(4)),
+        classification: getSurpriseClassification(t.prob, t.token, handTokens.slice(0, i).map(x => x.token).join(' '))
+      });
     });
 
-    const perplexity = Math.exp(sumLog / N);
+    const avgNegLog = sumNegLog / N;
+    const perplexity = Math.exp(avgNegLog);
 
     return {
       N,
+      tokenCalculations,
       product: parseFloat(product.toFixed(3)),
       productTermsStr: productTerms.join(' × '),
+      sumNegLog: parseFloat(sumNegLog.toFixed(4)),
+      avgNegLog: parseFloat(avgNegLog.toFixed(4)),
       perplexity: parseFloat(perplexity.toFixed(3))
     };
   }, [handTokens]);
@@ -447,13 +550,6 @@ export default function PerplexityExplorer({ onClose }) {
 
   const handleUpdateHandTokenName = (id, newName) => {
     setHandTokens(prev => prev.map(t => t.id === id ? { ...t, token: newName } : t));
-  };
-
-  // Helper color for token probability
-  const getProbColor = (p) => {
-    if (p >= 0.3) return { bg: 'rgba(34, 197, 94, 0.15)', border: 'rgba(34, 197, 94, 0.4)', text: '#4ade80', label: 'Expected' };
-    if (p >= 0.08) return { bg: 'rgba(234, 179, 8, 0.15)', border: 'rgba(234, 179, 8, 0.4)', text: '#fde047', label: 'Medium' };
-    return { bg: 'rgba(230, 36, 41, 0.18)', border: 'rgba(230, 36, 41, 0.5)', text: '#f87171', label: 'Surprising' };
   };
 
   return (
@@ -523,8 +619,15 @@ export default function PerplexityExplorer({ onClose }) {
                 <HelpCircle size={18} color="#e62429" />
               </div>
               <div style={styles.infoText}>
-                <strong>What is happening here?</strong> The model reads your sentence one token at a time.
-                For each token it tells us: <em>&ldquo;How likely did I think this token was, given the tokens before it?&rdquo;</em>
+                <div>
+                  <strong>What is token probability?</strong> Token probability{' '}
+                  <code style={{ color: '#60a5fa', fontWeight: 600 }}>P(token | context)</code> measures how likely
+                  this specific language model (DistilGPT-2) considers a token given the preceding context.
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#929BAD', marginTop: '6px', lineHeight: 1.5 }}>
+                  💡 <em>Important:</em> It reflects the model&apos;s internal probability distribution over its 50,257-token vocabulary.
+                  A low probability does <strong>not</strong> mean the word is unusual, unnatural, or improper in real-world human language — it only means that in this exact context, this model assigned higher probability mass to other continuations.
+                </div>
               </div>
             </div>
 
@@ -549,6 +652,7 @@ export default function PerplexityExplorer({ onClose }) {
                       setEvaluatedTokens(estimateTokensForText(preset));
                       setHasEvaluated(true);
                       setSelectedTokenIdx(null);
+                      setHoveredTokenIdx(null);
                     }}
                     style={{
                       ...styles.presetBtn,
@@ -620,40 +724,113 @@ export default function PerplexityExplorer({ onClose }) {
                       <Layers size={16} color="#e62429" />
                       <span>TOKEN PROBABILITIES: P(token | context)</span>
                     </div>
-                    <span style={styles.helperTip}>Click any token to inspect top predictions</span>
+                    <span style={styles.helperTip}>Hover or click any token to inspect classification reasons & predictions</span>
+                  </div>
+
+                  {/* Threshold Legend */}
+                  <div style={styles.thresholdLegend}>
+                    <span style={styles.legendTitle}>Classification Thresholds:</span>
+                    <span style={{ ...styles.legendBadge, color: '#4ade80', borderColor: 'rgba(34, 197, 94, 0.4)', background: 'rgba(34, 197, 94, 0.12)' }}>
+                      🟢 Expected: P ≥ 20.0%
+                    </span>
+                    <span style={{ ...styles.legendBadge, color: '#fde047', borderColor: 'rgba(234, 179, 8, 0.4)', background: 'rgba(234, 179, 8, 0.12)' }}>
+                      🟡 Medium: 5.0% ≤ P &lt; 20.0%
+                    </span>
+                    <span style={{ ...styles.legendBadge, color: '#f87171', borderColor: 'rgba(230, 36, 41, 0.4)', background: 'rgba(230, 36, 41, 0.15)' }}>
+                      🔴 Surprising: P &lt; 5.0%
+                    </span>
                   </div>
 
                   <div style={styles.tokensVisualContainer}>
                     {evaluatedTokens.map((t, i) => {
-                      const colors = getProbColor(t.prob);
+                      const precedingContext = evaluatedTokens.slice(0, i).map(x => x.token).join('');
+                      const classification = getSurpriseClassification(t.prob, t.token, precedingContext);
                       const isSelected = selectedTokenIdx === i;
+                      const isHovered = hoveredTokenIdx === i;
+
                       return (
                         <div
                           key={i}
                           onClick={() => setSelectedTokenIdx(isSelected ? null : i)}
+                          onMouseEnter={() => setHoveredTokenIdx(i)}
+                          onMouseLeave={() => setHoveredTokenIdx(null)}
+                          title={classification.tooltip}
                           style={{
                             ...styles.tokenPill,
-                            background: colors.bg,
-                            borderColor: isSelected ? '#fff' : colors.border,
-                            boxShadow: isSelected ? `0 0 12px ${colors.text}` : 'none'
+                            background: classification.bg,
+                            borderColor: isSelected || isHovered ? '#fff' : classification.border,
+                            boxShadow: isSelected || isHovered ? `0 0 14px ${classification.color}` : 'none'
                           }}
                         >
                           <div style={styles.tokenTopRow}>
                             <span style={styles.tokenIndex}>#{i + 1}</span>
-                            <span style={{ ...styles.tokenTag, color: colors.text }}>
-                              {colors.label}
+                            <span style={{ ...styles.tokenTag, color: classification.color }}>
+                              {classification.label}
                             </span>
                           </div>
                           <div style={styles.tokenString}>
                             {t.token.startsWith(' ') ? `␣${t.token.slice(1)}` : t.token}
                           </div>
-                          <div style={{ ...styles.tokenProbVal, color: colors.text }}>
-                            P = {(t.prob * 100).toFixed(1)}%
+                          <div style={{ ...styles.tokenProbVal, color: classification.color }}>
+                            <span>P = {(t.prob * 100).toFixed(1)}%</span>
+                            <span style={styles.pillDecimalProb}>({t.prob})</span>
                           </div>
                         </div>
                       );
                     })}
                   </div>
+
+                  {/* Active / Hovered Token Tooltip Banner */}
+                  {(() => {
+                    const activeIdx = hoveredTokenIdx !== null ? hoveredTokenIdx : selectedTokenIdx;
+                    if (activeIdx === null || !evaluatedTokens[activeIdx]) return null;
+                    const activeToken = evaluatedTokens[activeIdx];
+                    const precedingContext = evaluatedTokens.slice(0, activeIdx).map(x => x.token).join('') || '[Start of sequence]';
+                    const activeClassification = getSurpriseClassification(activeToken.prob, activeToken.token, precedingContext);
+
+                    return (
+                      <div
+                        style={{
+                          ...styles.tokenDetailCard,
+                          borderColor: activeClassification.border,
+                          background: 'rgba(8, 11, 18, 0.95)'
+                        }}
+                      >
+                        <div style={styles.detailCardTop}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={styles.detailTokenBadge}>Token #{activeIdx + 1}</span>
+                            <code style={styles.detailTokenCode}>
+                              {activeToken.token.startsWith(' ') ? `␣${activeToken.token.slice(1)}` : activeToken.token}
+                            </code>
+                            <span style={{
+                              ...styles.legendBadge,
+                              color: activeClassification.color,
+                              borderColor: activeClassification.badgeBorder,
+                              background: activeClassification.badgeBg
+                            }}>
+                              {activeClassification.icon} {activeClassification.label} ({activeClassification.thresholdRule})
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ color: activeClassification.color, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 700 }}>
+                              Actual P = {activeToken.prob} ({(activeToken.prob * 100).toFixed(2)}%)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={styles.detailExplanation}>
+                          <div style={{ fontSize: '0.8rem', color: '#929BAD' }}>
+                            <strong>Preceding Context:</strong>{' '}
+                            <span style={{ color: '#60a5fa', fontFamily: "'JetBrains Mono', monospace" }}>{precedingContext}</span>
+                          </div>
+                          <div style={{ fontSize: '0.83rem', color: '#F5F7FA', lineHeight: 1.5, marginTop: '4px' }}>
+                            <strong style={{ color: activeClassification.color }}>Why this classification:</strong>{' '}
+                            {activeClassification.tooltip}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Alternative Predictions popup if token clicked */}
                   {selectedTokenIdx !== null && evaluatedTokens[selectedTokenIdx] && (
@@ -666,7 +843,7 @@ export default function PerplexityExplorer({ onClose }) {
                           onClick={() => setSelectedTokenIdx(null)}
                           style={styles.closeInspectorBtn}
                         >
-                          ✕
+                          ✕ Close
                         </button>
                       </div>
                       <div style={styles.inspectorList}>
@@ -697,7 +874,7 @@ export default function PerplexityExplorer({ onClose }) {
                 <div style={styles.card}>
                   <div style={styles.cardTitle}>
                     <Calculator size={16} color="#1677FF" />
-                    <span>STEP-BY-STEP PROBABILITY TABLE</span>
+                    <span>STEP-BY-STEP PROBABILITY TABLE & LOG CALCULATION</span>
                   </div>
 
                   <div style={styles.tableScroll}>
@@ -706,30 +883,53 @@ export default function PerplexityExplorer({ onClose }) {
                         <tr>
                           <th style={styles.th}>#</th>
                           <th style={styles.th}>Token</th>
-                          <th style={styles.th}>Probability P</th>
-                          <th style={styles.th}>1 / P</th>
-                          <th style={styles.th}>Surprisal (-log₂ P)</th>
+                          <th style={styles.th}>Actual Probability P</th>
+                          <th style={styles.th}>Classification & Threshold</th>
+                          <th style={styles.th}>-ln P (Neg Log Prob)</th>
+                          <th style={styles.th}>1 / P (Reciprocal)</th>
+                          <th style={styles.th}>Model Evaluation Note</th>
                         </tr>
                       </thead>
                       <tbody>
                         {evaluatedTokens.map((t, idx) => {
+                          const precedingContext = evaluatedTokens.slice(0, idx).map(x => x.token).join('');
+                          const classification = getSurpriseClassification(t.prob, t.token, precedingContext);
                           const recip = (1 / t.prob).toFixed(3);
-                          const surprisal = (-Math.log2(t.prob)).toFixed(2);
-                          const colors = getProbColor(t.prob);
+                          const negLog = (-Math.log(Math.max(1e-7, t.prob))).toFixed(4);
+
                           return (
-                            <tr key={idx} style={styles.tr}>
+                            <tr key={idx} style={styles.tr} title={classification.tooltip}>
                               <td style={styles.tdIndex}>{idx + 1}</td>
                               <td style={styles.tdToken}>
-                                <code style={{ color: colors.text }}>{t.token}</code>
+                                <code style={{ color: classification.color }}>{t.token}</code>
                               </td>
                               <td style={styles.td}>
-                                <span style={{ color: colors.text, fontWeight: 600 }}>
+                                <span style={{ color: classification.color, fontWeight: 700 }}>
                                   {t.prob}
                                 </span>
                                 <span style={styles.pctLabel}>({(t.prob * 100).toFixed(1)}%)</span>
                               </td>
+                              <td style={styles.td}>
+                                <span
+                                  style={{
+                                    ...styles.tableClassificationBadge,
+                                    color: classification.color,
+                                    borderColor: classification.badgeBorder,
+                                    background: classification.badgeBg
+                                  }}
+                                  title={classification.tooltip}
+                                >
+                                  {classification.icon} {classification.label}
+                                  <span style={styles.tableThresholdNote}>({classification.thresholdRule})</span>
+                                </span>
+                              </td>
+                              <td style={styles.tdNegLog}>{negLog}</td>
                               <td style={styles.tdRecip}>{recip}</td>
-                              <td style={styles.tdSurprisal}>{surprisal} bits</td>
+                              <td style={styles.tdWhy}>
+                                <span style={styles.whyText} title={classification.tooltip}>
+                                  {classification.summary}
+                                </span>
+                              </td>
                             </tr>
                           );
                         })}
@@ -742,15 +942,13 @@ export default function PerplexityExplorer({ onClose }) {
                     <div style={styles.stepItem}>
                       <div style={styles.stepNumBadge}>Step 1</div>
                       <div style={styles.stepBody}>
-                        <span style={styles.stepTitle}>Multiply all the 1/P values:</span>
+                        <span style={styles.stepTitle}>
+                          Sum negative log probabilities: <code style={{ color: '#60a5fa' }}>&sum; -ln P(token | context)</code>
+                        </span>
                         <div style={styles.stepMath}>
-                          {evaluatedTokens.map(t => (1 / t.prob).toFixed(2)).join(' × ')}
+                          {mode1Stats.tokenCalculations.map(t => `${t.negLog}`).join(' + ')}
                           {' = '}
-                          <strong style={{ color: '#fff' }}>
-                            {mode1Stats.productOfReciprocals < 1e6
-                              ? mode1Stats.productOfReciprocals.toFixed(2)
-                              : mode1Stats.productOfReciprocals.toExponential(3)}
-                          </strong>
+                          <strong style={{ color: '#fff' }}>{mode1Stats.sumNegativeLogProb}</strong>
                         </div>
                       </div>
                     </div>
@@ -758,9 +956,12 @@ export default function PerplexityExplorer({ onClose }) {
                     <div style={styles.stepItem}>
                       <div style={styles.stepNumBadge}>Step 2</div>
                       <div style={styles.stepBody}>
-                        <span style={styles.stepTitle}>Count the tokens:</span>
+                        <span style={styles.stepTitle}>
+                          Calculate average negative log probability across N = {mode1Stats.N} evaluated tokens:
+                        </span>
                         <div style={styles.stepMath}>
-                          N = <strong style={{ color: '#fff' }}>{mode1Stats.N}</strong>
+                          Average -ln P = {mode1Stats.sumNegativeLogProb} / {mode1Stats.N} ={' '}
+                          <strong style={{ color: '#fff' }}>{mode1Stats.avgNegativeLogProb}</strong>
                         </div>
                       </div>
                     </div>
@@ -768,14 +969,18 @@ export default function PerplexityExplorer({ onClose }) {
                     <div style={styles.stepItem}>
                       <div style={styles.stepNumBadge}>Step 3</div>
                       <div style={styles.stepBody}>
-                        <span style={styles.stepTitle}>Take the N-th root:</span>
+                        <span style={styles.stepTitle}>
+                          Exponentiate the average negative log probability: <code style={{ color: '#e62429' }}>exp(Average -ln P)</code>
+                        </span>
                         <div style={styles.stepMath}>
-                          ({mode1Stats.productOfReciprocals < 1e6 ? mode1Stats.productOfReciprocals.toFixed(2) : 'Product'})
-                          <sup>1/{mode1Stats.N}</sup>
+                          Perplexity = exp({mode1Stats.avgNegativeLogProb}) = e<sup>{mode1Stats.avgNegativeLogProb}</sup>
                           {' = '}
-                          <strong style={{ color: '#e62429', fontSize: '1.2rem' }}>
+                          <strong style={{ color: '#e62429', fontSize: '1.25rem' }}>
                             {mode1Stats.perplexity}
                           </strong>
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#929BAD', marginTop: 4 }}>
+                          ℹ️ Equivalent reciprocal root: ({mode1Stats.tokenCalculations.map(t => t.recip).join(' × ')})<sup>1/{mode1Stats.N}</sup> = {mode1Stats.perplexity}
                         </div>
                       </div>
                     </div>
@@ -789,14 +994,14 @@ export default function PerplexityExplorer({ onClose }) {
                     </div>
                     <div style={styles.verdictExplanation}>
                       <p style={{ margin: 0, fontWeight: 600, color: '#F5F7FA' }}>
-                        Perplexity ≈ {mode1Stats.perplexity}: on average the model was as unsure as choosing between about {Math.round(mode1Stats.perplexity)} equally likely tokens.
+                        Perplexity = exp(average negative log prob) ≈ {mode1Stats.perplexity}: on average the model was as unsure as choosing among ~{Math.round(mode1Stats.perplexity)} equally likely tokens at each step.
                       </p>
                       <p style={styles.verdictSub}>
                         {mode1Stats.perplexity < 25
-                          ? '🌟 Low perplexity! The model finds this sentence highly natural and predictable.'
+                          ? '🌟 Low perplexity under DistilGPT-2: This sentence matches common patterns in the model’s training distribution.'
                           : mode1Stats.perplexity < 80
-                          ? '⚖️ Moderate perplexity. Common in conversational or semi-formal text.'
-                          : '⚠️ High perplexity! The model found these word transitions unexpected or disordered.'}
+                          ? '⚖️ Moderate perplexity under DistilGPT-2: Several valid phrasing alternatives shared the model’s probability mass.'
+                          : '⚠️ Higher perplexity under DistilGPT-2: The model’s learned distribution favored other tokens in its vocabulary. (Note: A higher perplexity under a specific model does NOT imply the text is unusual or incorrect in real-world human communication).'}
                       </p>
                     </div>
                   </div>
@@ -940,22 +1145,37 @@ export default function PerplexityExplorer({ onClose }) {
                       <th style={styles.th}>#</th>
                       <th style={styles.th}>Token</th>
                       <th style={styles.th}>Probability P</th>
-                      <th style={styles.th}>1 / P</th>
+                      <th style={styles.th}>Classification & Threshold</th>
+                      <th style={styles.th}>-ln P (Neg Log Prob)</th>
+                      <th style={styles.th}>1 / P (Reciprocal)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {handTokens.map((t, idx) => (
-                      <tr key={t.id} style={styles.tr}>
+                    {mode2Stats.tokenCalculations.map((t, idx) => (
+                      <tr key={idx} style={styles.tr} title={t.classification.tooltip}>
                         <td style={styles.tdIndex}>{idx + 1}</td>
                         <td style={styles.tdToken}>
                           <code>{t.token}</code>
                         </td>
                         <td style={styles.td}>
-                          <span style={{ color: '#4ade80', fontWeight: 600 }}>{t.prob}</span>
+                          <span style={{ color: t.classification.color, fontWeight: 700 }}>{t.prob}</span>
+                          <span style={styles.pctLabel}>({(t.prob * 100).toFixed(1)}%)</span>
                         </td>
-                        <td style={styles.tdRecip}>
-                          {(1 / Math.max(0.0001, t.prob)).toFixed(3)}
+                        <td style={styles.td}>
+                          <span
+                            style={{
+                              ...styles.tableClassificationBadge,
+                              color: t.classification.color,
+                              borderColor: t.classification.badgeBorder,
+                              background: t.classification.badgeBg
+                            }}
+                          >
+                            {t.classification.icon} {t.classification.label}
+                            <span style={styles.tableThresholdNote}>({t.classification.thresholdRule})</span>
+                          </span>
                         </td>
+                        <td style={styles.tdNegLog}>{t.negLog}</td>
+                        <td style={styles.tdRecip}>{t.recip}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -967,9 +1187,9 @@ export default function PerplexityExplorer({ onClose }) {
                 <div style={styles.stepItem}>
                   <div style={styles.stepNumBadge}>Step 1</div>
                   <div style={styles.stepBody}>
-                    <span style={styles.stepTitle}>Multiply all the 1/P values:</span>
+                    <span style={styles.stepTitle}>Sum negative log probabilities: <code style={{ color: '#60a5fa' }}>&sum; -ln P</code></span>
                     <div style={styles.stepMath}>
-                      {mode2Stats.productTermsStr} = <strong style={{ color: '#fff' }}>{mode2Stats.product}</strong>
+                      {mode2Stats.tokenCalculations.map(t => `${t.negLog}`).join(' + ')} = <strong style={{ color: '#fff' }}>{mode2Stats.sumNegLog}</strong>
                     </div>
                   </div>
                 </div>
@@ -977,9 +1197,9 @@ export default function PerplexityExplorer({ onClose }) {
                 <div style={styles.stepItem}>
                   <div style={styles.stepNumBadge}>Step 2</div>
                   <div style={styles.stepBody}>
-                    <span style={styles.stepTitle}>Count the tokens:</span>
+                    <span style={styles.stepTitle}>Calculate average negative log prob across N = {mode2Stats.N} tokens:</span>
                     <div style={styles.stepMath}>
-                      N = <strong style={{ color: '#fff' }}>{mode2Stats.N}</strong>
+                      Average -ln P = {mode2Stats.sumNegLog} / {mode2Stats.N} = <strong style={{ color: '#fff' }}>{mode2Stats.avgNegLog}</strong>
                     </div>
                   </div>
                 </div>
@@ -987,13 +1207,16 @@ export default function PerplexityExplorer({ onClose }) {
                 <div style={styles.stepItem}>
                   <div style={styles.stepNumBadge}>Step 3</div>
                   <div style={styles.stepBody}>
-                    <span style={styles.stepTitle}>Take the N-th root:</span>
+                    <span style={styles.stepTitle}>Exponentiate average: <code style={{ color: '#e62429' }}>exp(avg)</code></span>
                     <div style={styles.stepMath}>
-                      ({mode2Stats.product})<sup>1/{mode2Stats.N}</sup>
+                      Perplexity = exp({mode2Stats.avgNegLog}) = e<sup>{mode2Stats.avgNegLog}</sup>
                       {' = '}
                       <strong style={{ color: '#e62429', fontSize: '1.2rem' }}>
                         {mode2Stats.perplexity}
                       </strong>
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: '#929BAD', marginTop: 4 }}>
+                      ℹ️ Equivalent reciprocal product root: ({mode2Stats.productTermsStr})<sup>1/{mode2Stats.N}</sup> = {mode2Stats.perplexity}
                     </div>
                   </div>
                 </div>
@@ -1007,10 +1230,10 @@ export default function PerplexityExplorer({ onClose }) {
                 </div>
                 <div style={styles.verdictExplanation}>
                   <p style={{ margin: 0, fontWeight: 600, color: '#F5F7FA' }}>
-                    Perplexity ≈ {mode2Stats.perplexity}: on average the model was as unsure as choosing between about {mode2Stats.perplexity} equally likely tokens.
+                    Perplexity = exp(average negative log prob) ≈ {mode2Stats.perplexity}: corresponds to an effective branching uncertainty of {mode2Stats.perplexity} equally probable choices per token.
                   </p>
                   <p style={styles.verdictSub}>
-                    Try dragging any probability slider down towards 0.01 — notice how a single uncertain token drastically spikes the entire sentence&apos;s perplexity!
+                    Try dragging any probability slider down towards 0.01 — notice how a single low-probability token increases negative log loss and substantially elevates the overall sentence perplexity!
                   </p>
                 </div>
               </div>
@@ -1284,6 +1507,79 @@ const styles = {
     color: '#929BAD',
     fontStyle: 'italic'
   },
+  thresholdLegend: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    padding: '8px 12px',
+    background: 'rgba(8, 11, 18, 0.6)',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.06)',
+    marginBottom: '8px'
+  },
+  legendTitle: {
+    fontFamily: "'Orbitron', sans-serif",
+    fontSize: '0.7rem',
+    color: '#929BAD',
+    fontWeight: 700,
+    letterSpacing: '0.05em'
+  },
+  legendBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '3px 8px',
+    borderRadius: '12px',
+    border: '1px solid',
+    fontSize: '0.72rem',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontWeight: 600
+  },
+  pillDecimalProb: {
+    fontSize: '0.65rem',
+    opacity: 0.8,
+    marginLeft: '4px',
+    fontFamily: "'JetBrains Mono', monospace"
+  },
+  tokenDetailCard: {
+    border: '1px solid',
+    borderRadius: '10px',
+    padding: '12px 16px',
+    marginTop: '6px',
+    marginBottom: '10px',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)'
+  },
+  detailCardTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '8px',
+    paddingBottom: '8px',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+  },
+  detailTokenBadge: {
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: '0.72rem',
+    color: '#929BAD',
+    background: 'rgba(255, 255, 255, 0.06)',
+    padding: '2px 6px',
+    borderRadius: '4px'
+  },
+  detailTokenCode: {
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: '#fff'
+  },
+  detailExplanation: {
+    marginTop: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px'
+  },
   tokensVisualContainer: {
     display: 'flex',
     flexWrap: 'wrap',
@@ -1427,6 +1723,38 @@ const styles = {
     padding: '10px 12px',
     fontFamily: "'JetBrains Mono', monospace",
     color: '#f87171'
+  },
+  tableClassificationBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '3px 8px',
+    borderRadius: '6px',
+    border: '1px solid',
+    fontSize: '0.75rem',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontWeight: 600,
+    cursor: 'help'
+  },
+  tableThresholdNote: {
+    fontSize: '0.68rem',
+    opacity: 0.8,
+    fontWeight: 400
+  },
+  tdNegLog: {
+    padding: '10px 12px',
+    fontFamily: "'JetBrains Mono', monospace",
+    color: '#38bdf8'
+  },
+  tdWhy: {
+    padding: '10px 12px',
+    fontSize: '0.78rem',
+    color: '#cbd5e1',
+    maxWidth: '260px',
+    lineHeight: 1.4
+  },
+  whyText: {
+    cursor: 'help'
   },
   calculationStepsCard: {
     background: '#080B12',
