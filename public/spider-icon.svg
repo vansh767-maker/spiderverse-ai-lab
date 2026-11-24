@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="45" fill="#E62429"/>
+  <circle cx="50" cy="50" r="30" fill="none" stroke="#fff" stroke-width="2"/>
+  <!-- Spider web lines -->
+  <line x1="50" y1="5" x2="50" y2="95" stroke="#fff" stroke-width="1.5" opacity="0.5"/>
+  <line x1="5" y1="50" x2="95" y2="50" stroke="#fff" stroke-width="1.5" opacity="0.5"/>
+  <line x1="18" y1="18" x2="82" y2="82" stroke="#fff" stroke-width="1.5" opacity="0.5"/>
+  <line x1="82" y1="18" x2="18" y2="82" stroke="#fff" stroke-width="1.5" opacity="0.5"/>
+  <!-- Spider body -->
+  <ellipse cx="50" cy="45" rx="8" ry="10" fill="#fff"/>
+  <ellipse cx="50" cy="60" rx="10" ry="12" fill="#fff"/>
+  <!-- Spider legs -->
+  <line x1="42" y1="43" x2="25" y2="35" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="42" y1="47" x2="22" y2="47" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="42" y1="52" x2="25" y2="62" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="58" y1="43" x2="75" y2="35" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="58" y1="47" x2="78" y2="47" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="58" y1="52" x2="75" y2="62" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
